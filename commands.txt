@@ -1,0 +1,1707 @@
+
+https://github.com/humanpaingeneticslab/code_2022y_A
+
+
+----------------------------------------------------------------------
+======================================================================
+######################################################################
+# raw sequencing data provided by Genome Quebec
+# aligned on GRCh37 using STAR
+######################################################################
+======================================================================
+----------------------------------------------------------------------
+
+samtools view -H sample.0144.t1.bam
+
+
+@PG	ID:STAR	PN:STAR	VN:STAR_2.5.1b	CL:STAR   --runMode alignReads   --runThreadN 14   --genomeDir /cvmfs/soft.mugqic/CentOS6/
+genomes/species//Homo_sapiens.GRCh37/genome/star_index/Ensembl75.sjdbOverhang99   --readFilesIn /sb/hiseq/170313_K00271_0104_BHJ2V
+WBBXX_4078HS19B/Unaligned.5/Project_nanuq/Sample_t10144_MPS12302665_F02/t10144_MPS12302665_F02_S3_L005_R1_001.fastq.gz   /sb/hiseq
+/170313_K00271_0104_BHJ2VWBBXX_4078HS19B/Unaligned.5/Project_nanuq/Sample_t10144_MPS12302665_F02/t10144_MPS12302665_F02_S3_L005_R2
+_001.fastq.gz      --readFilesCommand zcat      --limitGenomeGenerateRAM 140000000000   --limitIObufferSize 1000000000   --limitBA
+MsortRAM 140000000000   --outFileNamePrefix /sb/hiseq/170313_K00271_0104_BHJ2VWBBXX_4078HS19B/Aligned.5/alignment/t1_0144/run4078_
+5/MPS12302665-F02/   --outStd Log   --outSAMtype BAM   SortedByCoordinate      --outSAMunmapped Within      --outSAMattrRGline ID:
+MPS12302665-F02_4078_5   PL:Illumina   PU:4078_5   LB:MPS12302665-F02   SM:t1_0144   "CN:McGill University and Genome Quebec Innov
+ation Centre"   
+@RG	ID:MPS12302665-F02_4078_5	PL:Illumina	PU:4078_5	LB:MPS12302665-F02	SM:t1_0144	CN:McGill Universi
+ty and Genome Quebec Innovation Centre
+@CO	user command line: STAR --runMode alignReads --genomeDir /cvmfs/soft.mugqic/CentOS6/genomes/species//Homo_sapiens.GRCh37/g
+enome/star_index/Ensembl75.sjdbOverhang99 --readFilesIn /sb/hiseq/170313_K00271_0104_BHJ2VWBBXX_4078HS19B/Unaligned.5/Project_nanu
+q/Sample_t10144_MPS12302665_F02/t10144_MPS12302665_F02_S3_L005_R1_001.fastq.gz /sb/hiseq/170313_K00271_0104_BHJ2VWBBXX_4078HS19B/U
+naligned.5/Project_nanuq/Sample_t10144_MPS12302665_F02/t10144_MPS12302665_F02_S3_L005_R2_001.fastq.gz --runThreadN 14 --readFilesC
+ommand zcat --outStd Log --outSAMunmapped Within --outSAMtype BAM SortedByCoordinate --outFileNamePrefix /sb/hiseq/170313_K00271_0
+104_BHJ2VWBBXX_4078HS19B/Aligned.5/alignment/t1_0144/run4078_5/MPS12302665-F02/ --outSAMattrRGline ID:MPS12302665-F02_4078_5 PL:Il
+lumina PU:4078_5 LB:MPS12302665-F02 SM:t1_0144 "CN:McGill University and Genome Quebec Innovation Centre" --limitGenomeGenerateRAM
+ 140000000000 --limitBAMsortRAM 140000000000 --limitIObufferSize 1000000000
+
+
+
+----------------------------------------------------------------------
+======================================================================
+######################################################################
+# count hits on genes via featureCounts
+######################################################################
+======================================================================
+----------------------------------------------------------------------
+
+# launch ~20 jobs at a time
+#
+for work in `seq 0 9`; do
+ls -1 sample.*.bam | sort -V | awk '{print $1, NR}' \
+  | while read data; do
+root=`echo "${data}" \
+  | cut -d ' ' -f 1 | awk '{gsub( ".bam", "", $0 ); print $0}'`
+modd=`echo "${data}" | cut -d ' ' -f 2 | awk '{print $1 % 10}'`
+
+if [ ${modd} -eq ${work} ]; then
+  echo "${data}"
+# -T: 5 threads
+# -f: count at feature level
+# -O: Assign reads to all their overlapping features
+# -M: Multi-mapping reads will also be counted
+# -s: non-stranded
+# -p: count fragments instead of reads
+# -t: feature type (gene)
+featureCounts \
+  -T 5    \
+  -f      \
+  -O      \
+  -M      \
+  -s 0    \
+  -p      \
+  -t gene \
+  -a hg19_refseq_longestgenes_nochr_hugo.gtf \
+  -o ${root}.gfc \
+     ${root}.bam &
+fi
+
+done
+for pidw in $(pgrep featureCounts); do
+  echo "waiting for" ${pidw}
+  tail --pid=${pidw} -f /dev/null
+done
+done
+
+
+
+
+
+----------------------------------------------------------------------
+======================================================================
+######################################################################
+# list of genes with tpM >= 0.1
+######################################################################
+======================================================================
+----------------------------------------------------------------------
+
+R --no-save --quiet
+load( "epid.R" )
+
+load_cnts <- function( strSample, strTime )
+{
+strFile <- paste0( 
+  "sample.", 
+  strSample,
+  ".",
+  strTime,
+  ".gfc" )
+print( strFile )
+cnts <- read.table(
+  strFile,
+  skip=2,
+  header=FALSE,
+  sep="\t",
+  as.is=TRUE,
+  stringsAsFactors=FALSE,
+  colClasses=c( "character", "NULL", "NULL", "NULL", "NULL", "NULL", "numeric" ) )
+
+# https://www.biostars.org/p/62988/
+rownames( cnts ) <- make.names( cnts[,1], unique=TRUE )
+# https://stackoverflow.com/questions/4605206/drop-data-frame-columns-by-name
+cnts <- subset( cnts, select=-c(1) )
+colnames( cnts ) <- c( paste0( strSample, ".", strTime ) )
+# colnames( cnts ) <- c( strSample )
+
+W <- which( rownames(cnts) == "HBB" )
+cnts <- cnts[ -c(W), 1, drop=FALSE ]
+W <- which( rownames(cnts) == "HBA1" )
+cnts <- cnts[ -c(W), 1, drop=FALSE ]
+W <- which( rownames(cnts) == "HBA2" )
+cnts <- cnts[ -c(W), 1, drop=FALSE ]
+return( cnts )
+}
+
+
+# load all samples
+i <- 1
+C <- load_cnts( epid[i,1], "t0" )
+I <- length( epid[,1] )
+for( i in 2:I )
+{
+C2 <- load_cnts( epid[i,1], "t0" )
+C <- cbind( C, C2 )
+}
+for( i in 1:I )
+{
+C2 <- load_cnts( epid[i,1], "t1" )
+C <- cbind( C, C2 )
+}
+
+
+# how many genes to consider?
+load_gfc <- function( )
+{
+strFile <- "sample.0156.t0.gfc"
+cnts <- read.table(
+  strFile,
+  skip=2,
+  header=FALSE,
+  sep="\t",
+  as.is=TRUE,
+  stringsAsFactors=FALSE,
+  colClasses=c( "character", "NULL", "NULL", "NULL", "NULL", "numeric", "NULL" ) )
+
+# https://www.biostars.org/p/62988/
+rownames( cnts ) <- make.names( cnts[,1], unique=TRUE )
+# https://stackoverflow.com/questions/4605206/drop-data-frame-columns-by-name
+cnts <- subset( cnts, select=-c(1) )
+colnames( cnts ) <- c( "Length" )
+
+W <- which( rownames(cnts) == "HBB" )
+cnts <- cnts[ -c(W), 1, drop=FALSE ]
+W <- which( rownames(cnts) == "HBA1" )
+cnts <- cnts[ -c(W), 1, drop=FALSE ]
+W <- which( rownames(cnts) == "HBA2" )
+cnts <- cnts[ -c(W), 1, drop=FALSE ]
+return( cnts )
+}
+
+# get gene lengths
+gfc <- load_gfc()
+# https://haroldpimentel.wordpress.com/2014/05/08/what-the-fpkm-a-review-rna-seq-expression-units/
+# asssume effective read length is ~100
+
+head( gfc - 100 )
+# about 7% of genes have length < 100
+#  so we retain about 93% of genes, or ~26,000
+W <- which( ( gfc - 100 ) > 0 )
+gfc <- gfc[ W, ]
+gfc <- gfc - 100
+  C <-   C[ W, ]
+
+# convert counts to tpM
+for( s in 1:ncol(C) )
+{
+  C[ , s ] <- C[ , s ] / gfc
+}
+S <- colSums( C )
+for( s in 1:ncol(C) )
+{
+  C[ , s ] <- 1e6 * C[ , s ] / S[ s ]
+}
+
+library( "matrixStats" )
+M <- rowMins( as.matrix( C ) )
+names( M ) <- rownames( C )
+summary( M )
+# tpM units:
+#     Min.   1st Qu.    Median      Mean   3rd Qu.      Max. 
+#     0.00      0.00      0.06     11.74      0.84 127064.50 
+
+ecdf( M )( 0.1 )
+# 0.53 => 1/2 of genes have tpM > 0.1
+
+length( which( M >= 0.1 ) )
+# 12081
+write.table( names( M )[ which( M >= 0.1 ) ],
+  file="genes_tpM_0p1.txt", sep="\t", 
+  row.names=FALSE, col.names=FALSE, quote=FALSE )
+
+nC <- data.frame( gene=rownames( C ), C, check.names=F )
+write.table( nC,
+  file="expr_ALL.tpM.txt", sep="\t", 
+  row.names=FALSE, col.names=TRUE, quote=FALSE )
+quit()
+
+
+
+
+
+----------------------------------------------------------------------
+======================================================================
+######################################################################
+# differentially expressed genes via DESeq2
+######################################################################
+======================================================================
+----------------------------------------------------------------------
+
+
+R --no-save --quiet
+library(DESeq2)
+library("BiocParallel")
+print(sessionInfo())
+# R version 3.6.0 (2019-04-26)
+# Platform: x86_64-pc-linux-gnu (64-bit)
+# Running under: Ubuntu 20.04.4 LTS
+# 
+# Matrix products: default
+# BLAS:   /usr/lib/x86_64-linux-gnu/blas/libblas.so.3.9.0
+# LAPACK: /usr/lib/x86_64-linux-gnu/lapack/liblapack.so.3.9.0
+# 
+# locale:
+#  [1] LC_CTYPE=en_CA.UTF-8       LC_NUMERIC=C              
+#  [3] LC_TIME=en_CA.UTF-8        LC_COLLATE=en_CA.UTF-8    
+#  [5] LC_MONETARY=en_CA.UTF-8    LC_MESSAGES=en_CA.UTF-8   
+#  [7] LC_PAPER=en_CA.UTF-8       LC_NAME=C                 
+#  [9] LC_ADDRESS=C               LC_TELEPHONE=C            
+# [11] LC_MEASUREMENT=en_CA.UTF-8 LC_IDENTIFICATION=C       
+# 
+# attached base packages:
+# [1] parallel  stats4    stats     graphics  grDevices utils     datasets 
+# [8] methods   base     
+# 
+# other attached packages:
+#  [1] DESeq2_1.26.0               SummarizedExperiment_1.16.1
+#  [3] DelayedArray_0.12.3         BiocParallel_1.20.1        
+#  [5] matrixStats_0.61.0          Biobase_2.46.0             
+#  [7] GenomicRanges_1.38.0        GenomeInfoDb_1.22.1        
+#  [9] IRanges_2.20.2              S4Vectors_0.24.4           
+# [11] BiocGenerics_0.32.0        
+# 
+# loaded via a namespace (and not attached):
+#  [1] bit64_4.0.5            splines_3.6.0          Formula_1.2-4         
+#  [4] assertthat_0.2.1       latticeExtra_0.6-29    blob_1.2.1            
+#  [7] GenomeInfoDbData_1.2.2 pillar_1.7.0           RSQLite_2.2.2         
+# [10] backports_1.4.1        lattice_0.20-38        glue_1.6.2            
+# [13] digest_0.6.29          RColorBrewer_1.1-2     XVector_0.26.0        
+# [16] checkmate_2.0.0        colorspace_2.0-3       htmltools_0.5.1       
+# [19] Matrix_1.2-17          XML_3.99-0.3           pkgconfig_2.0.3       
+# [22] genefilter_1.68.0      zlibbioc_1.32.0        purrr_0.3.4           
+# [25] xtable_1.8-4           scales_1.1.1           jpeg_0.1-8.1          
+# [28] htmlTable_2.1.0        tibble_3.1.6           annotate_1.64.0       
+# [31] generics_0.1.2         ggplot2_3.3.5          ellipsis_0.3.2        
+# [34] cachem_1.0.5           nnet_7.3-12            cli_3.2.0             
+# [37] survival_3.2-7         magrittr_2.0.2         crayon_1.5.0          
+# [40] memoise_2.0.0          fansi_1.0.2            foreign_0.8-71        
+# [43] tools_3.6.0            data.table_1.14.2      lifecycle_1.0.1       
+# [46] stringr_1.4.0          locfit_1.5-9.4         munsell_0.5.0         
+# [49] cluster_2.0.8          AnnotationDbi_1.48.0   compiler_3.6.0        
+# [52] rlang_1.0.1            grid_3.6.0             RCurl_1.98-1.2        
+# [55] rstudioapi_0.13        htmlwidgets_1.5.3      bitops_1.0-6          
+# [58] base64enc_0.1-3        gtable_0.3.0           DBI_1.1.1             
+# [61] R6_2.5.1               gridExtra_2.3          knitr_1.30            
+# [64] dplyr_1.0.8            fastmap_1.1.0          bit_4.0.4             
+# [67] utf8_1.2.2             Hmisc_4.4-2            stringi_1.5.3         
+# [70] Rcpp_1.0.8             geneplotter_1.64.0     vctrs_0.3.8           
+# [73] rpart_4.1-15           png_0.1-7              tidyselect_1.1.1      
+# [76] xfun_0.28             
+quit()
+
+
+
+######################################################################
+#=====================================================================
+#---------------------------------------------------------------------
+#
+#      1) NR vs R, at t1
+#
+#---------------------------------------------------------------------
+#=====================================================================
+######################################################################
+
+
+R --no-save --quiet
+load( "epid.R" )
+
+load_cnts <- function( strSample, strTime )
+{
+strFile <- paste0( 
+  "sample.", 
+  strSample,
+  ".",
+  strTime,
+  ".gfc" )
+print( strFile )
+cnts <- read.table(
+  strFile,
+  skip=2,
+  header=FALSE,
+  sep="\t",
+  as.is=TRUE,
+  stringsAsFactors=FALSE,
+  colClasses=c( "character", "NULL", "NULL", "NULL", "NULL", "NULL", "numeric" ) )
+
+# https://www.biostars.org/p/62988/
+rownames( cnts ) <- make.names( cnts[,1], unique=TRUE )
+# https://stackoverflow.com/questions/4605206/drop-data-frame-columns-by-name
+cnts <- subset( cnts, select=-c(1) )
+# colnames( cnts ) <- c( paste0( strSample, ".", strTime ) )
+colnames( cnts ) <- c( strSample )
+
+W <- which( rownames(cnts) == "HBB" )
+cnts <- cnts[ -c(W), 1, drop=FALSE ]
+W <- which( rownames(cnts) == "HBA1" )
+cnts <- cnts[ -c(W), 1, drop=FALSE ]
+W <- which( rownames(cnts) == "HBA2" )
+cnts <- cnts[ -c(W), 1, drop=FALSE ]
+return( cnts )
+}
+
+
+# NR vs R @ t1:
+i <- 1
+C <- load_cnts( epid[i,1], "t1" )
+I <- length( epid[,1] )
+for( i in 2:I )
+{
+C2 <- load_cnts( epid[i,1], "t1" )
+C <- cbind( C, C2 )
+}
+
+library(DESeq2)
+library("BiocParallel")
+register(MulticoreParam(28))
+
+coldata <- data.frame(
+  row.names   = colnames( C ),
+  "condition" = factor( ifelse( epid[,"resolved"], "R", "NR" ) ),
+  "gender"    = factor( epid[,"Gender"  ] ),
+  "smoker"    = factor( epid[,"Smoker"  ] ),
+  "rin"       =         epid[,"RIN.t1"  ]  ,
+  "nbX"       =         epid[,"nbX.t1"  ]  ,
+  "age"       =         epid[,"age"     ] )
+
+# make sure denominator is resolved
+# https://bioconductor.org/packages/release/bioc/vignettes/DESeq2/inst/doc/DESeq2.html#note-on-factor-levels
+coldata[,1] <- relevel( coldata[,1], ref = "R" )
+
+
+# order of samples
+#  from largest number of outlier genes to least
+bigO <- order( -coldata[,"nbX"] )
+nb_samples   <- length( bigO )
+set_dirtiest <- 1:nb_samples
+set_cleanest <- (1+max( which( coldata$nbX[bigO] > 5 ) )):nb_samples
+# confirm that these are cleanest
+coldata$nbX[bigO[ set_cleanest ]]
+coldata$nbX[bigO[ set_dirtiest ]]
+
+
+#--- estimate DEG in dirtiest set
+dds <- DESeqDataSetFromMatrix(
+  countData=C[ , bigO[ set_dirtiest ] ],
+  colData=coldata[ bigO[ set_dirtiest ], ],
+  design =~ rin + age + gender + smoker + condition )
+dds <- DESeq(
+  dds,
+  parallel=TRUE,
+  BPPARAM=MulticoreParam(28) )
+res_dirtiest <- results( dds )
+
+
+#--- estimate DEG in cleanest set
+dds <- DESeqDataSetFromMatrix(
+  countData=C[ , bigO[ set_cleanest ] ],
+  colData=coldata[ bigO[ set_cleanest ], ],
+  design =~ rin + age + gender + smoker + condition )
+dds <- DESeq(
+  dds,
+  parallel=TRUE,
+  BPPARAM=MulticoreParam(28) )
+res_cleanest <- results( dds )
+
+
+nb_steps <- 0
+while( TRUE )
+{
+nb_steps <- nb_steps + 1
+
+# are these two sets correlated?
+cor <- cor.test( 
+  res_cleanest$stat, 
+  res_dirtiest$stat )$estimate
+cat( "-----------------------------------------\n", sep="" )
+cat( "at step ", nb_steps, ", cor is: ", cor, "\n", sep="" )
+cat( "dirtiest: ", head( set_dirtiest, 1 ),   "\n", sep="" )
+cat( "cleanest: ", head( set_cleanest, 1 ),   "\n", sep="" )
+cat( "-----------------------------------------\n", sep="" )
+
+# if not, then test the middle
+if( ( cor < 0.99 ) &
+  ( ( length( set_dirtiest ) - length( set_cleanest ) ) > 1 ) )
+{
+  # test
+  set_test <- floor( ( length( set_dirtiest ) - length( set_cleanest ) ) / 2 )
+  set_test <- head( set_cleanest, 1 ) - set_test
+  set_test <- set_test:nb_samples
+
+  #--- estimate DEG in test set
+  dds <- DESeqDataSetFromMatrix(
+    countData=C[ , bigO[ set_test ] ],
+    colData=coldata[ bigO[ set_test ], ],
+    design =~ rin + age + gender + smoker + condition )
+  dds <- DESeq(
+    dds,
+    parallel=TRUE,
+    BPPARAM=MulticoreParam(28) )
+  res_test <- results( dds )
+
+  cor_w_cleanest <- cor.test( 
+        res_test$stat, 
+    res_cleanest$stat )$estimate
+  cor_w_dirtiest <- cor.test( 
+        res_test$stat, 
+    res_dirtiest$stat )$estimate
+  cat( "  cor w cleanest: ", cor_w_cleanest, "\n", sep="" )
+  cat( "  cor w dirtiest: ", cor_w_dirtiest, "\n", sep="" )
+
+  # figure out if the test set is closer to
+  #  the cleanest set or the dirtiest set
+  if( cor_w_cleanest > cor_w_dirtiest )
+  {
+    # make the cleanest set that of the test set
+    set_cleanest <- set_test
+    res_cleanest <- res_test
+  } else {
+    # make the dirtiest set that of the test set
+    set_dirtiest <- set_test
+    res_dirtiest <- res_test
+  }
+} else { break }
+}
+
+
+# plot( res_cleanest$stat, res_dirtiest$stat )
+# table( colData( dds )$condition )
+#  R NR 
+# 49 48 
+# table( colData( dds )$gender )
+# table( colData( dds )$smoker )
+
+# samples that were removed;
+setdiff( rownames( coldata ), rownames( colData( dds ) ) )
+# "0281"
+
+
+
+## Merge with averaged normalized count data per condition
+coldata <- colData( dds )
+L   <- levels( coldata$condition )
+nC  <- as.data.frame( counts( dds, normalized=TRUE ) )
+rmT <- rowMeans( nC[ , coldata$condition == L[2] ] )
+rmB <- rowMeans( nC[ , coldata$condition == L[1] ] )
+rrr <- cbind( cbind( 
+  as.data.frame( results( dds, independentFiltering=FALSE ) ), 
+  rmT ), rmB )
+colnames( rrr ) <- c( colnames( rrr )[ 1:6 ], L[2], L[1] )
+#=====----- results for all genes
+O   <- order( rrr$pvalue )
+rrr[ head( O ), ]
+write.table( 
+ rrr[ O, ],
+ "diff_ALLtpM_t1_-_NR_vs_R.txt",
+ sep="\t",
+ row.names=TRUE,
+ col.names=TRUE,
+ quote=FALSE )
+#=====----- results for genes with tpM > 0.1
+genes <- read.table( "genes_tpM_0p1.txt", header=FALSE )
+colnames( genes ) <- c( "gene" )
+rrr <- merge( genes, rrr, by.x=1, by.y=0 )
+# re-estimate FDR
+rrr[,"padj"] <- p.adjust( rrr[,"pvalue"], method="fdr" )
+O   <- order( rrr$pvalue )
+rrr[ head( O ), ]
+write.table( 
+ rrr[ O, ],
+ "diff_ITALY1_t1_-_NR_vs_R.txt",
+ sep="\t",
+ row.names=FALSE,
+ col.names=TRUE,
+ quote=FALSE )
+write.table( 
+  colData( dds ), 
+  "coldata_ITALY1_t1_-_NR_vs_R.txt",
+  sep="\t",
+  row.names=FALSE,
+  col.names=TRUE,
+  quote=FALSE )
+length( which( ( !is.na(rrr[,"padj"]) ) & ( rrr[,"padj"] <= 0.1 ) ) )
+# 1724
+quit()
+
+
+
+
+######################################################################
+#=====================================================================
+#---------------------------------------------------------------------
+#
+#      2) NR vs R, at t0
+#
+#---------------------------------------------------------------------
+#=====================================================================
+######################################################################
+
+
+R --no-save --quiet
+load( "epid.R" )
+
+load_cnts <- function( strSample, strTime )
+{
+strFile <- paste0( 
+  "sample.", 
+  strSample,
+  ".",
+  strTime,
+  ".gfc" )
+print( strFile )
+cnts <- read.table(
+  strFile,
+  skip=2,
+  header=FALSE,
+  sep="\t",
+  as.is=TRUE,
+  stringsAsFactors=FALSE,
+  colClasses=c( "character", "NULL", "NULL", "NULL", "NULL", "NULL", "numeric" ) )
+
+# https://www.biostars.org/p/62988/
+rownames( cnts ) <- make.names( cnts[,1], unique=TRUE )
+# https://stackoverflow.com/questions/4605206/drop-data-frame-columns-by-name
+cnts <- subset( cnts, select=-c(1) )
+# colnames( cnts ) <- c( paste0( strSample, ".", strTime ) )
+colnames( cnts ) <- c( strSample )
+
+W <- which( rownames(cnts) == "HBB" )
+cnts <- cnts[ -c(W), 1, drop=FALSE ]
+W <- which( rownames(cnts) == "HBA1" )
+cnts <- cnts[ -c(W), 1, drop=FALSE ]
+W <- which( rownames(cnts) == "HBA2" )
+cnts <- cnts[ -c(W), 1, drop=FALSE ]
+return( cnts )
+}
+
+
+# NR vs R @ t0:
+i <- 1
+C <- load_cnts( epid[i,1], "t0" )
+I <- length( epid[,1] )
+for( i in 2:I )
+{
+C2 <- load_cnts( epid[i,1], "t0" )
+C <- cbind( C, C2 )
+}
+
+library(DESeq2)
+library("BiocParallel")
+register(MulticoreParam(28))
+
+coldata <- data.frame(
+  row.names   = colnames( C ),
+  "condition" = factor( ifelse( epid[,"resolved"], "R", "NR" ) ),
+  "gender"    = factor( epid[,"Gender"  ] ),
+  "smoker"    = factor( epid[,"Smoker"  ] ),
+  "rin"       =         epid[,"RIN.t0"  ]  ,
+  "nbX"       =         epid[,"nbX.t0"  ]  ,
+  "age"       =         epid[,"age"     ] )
+
+# make sure denominator is resolved
+# https://bioconductor.org/packages/release/bioc/vignettes/DESeq2/inst/doc/DESeq2.html#note-on-factor-levels
+coldata[,1] <- relevel( coldata[,1], ref = "R" )
+
+
+# order of samples
+#  from largest number of outlier genes to least
+bigO <- order( -coldata[,"nbX"] )
+nb_samples   <- length( bigO )
+set_dirtiest <- 1:nb_samples
+set_cleanest <- (1+max( which( coldata$nbX[bigO] > 5 ) )):nb_samples
+# confirm that these are cleanest
+coldata$nbX[bigO[ set_cleanest ]]
+coldata$nbX[bigO[ head( set_dirtiest ) ]]
+
+
+#--- estimate DEG in dirtiest set
+dds <- DESeqDataSetFromMatrix(
+  countData=C[ , bigO[ set_dirtiest ] ],
+  colData=coldata[ bigO[ set_dirtiest ], ],
+  design =~ rin + age + gender + smoker + condition )
+dds <- DESeq(
+  dds,
+  parallel=TRUE,
+  BPPARAM=MulticoreParam(28) )
+res_dirtiest <- results( dds )
+
+
+#--- estimate DEG in cleanest set
+dds <- DESeqDataSetFromMatrix(
+  countData=C[ , bigO[ set_cleanest ] ],
+  colData=coldata[ bigO[ set_cleanest ], ],
+  design =~ rin + age + gender + smoker + condition )
+dds <- DESeq(
+  dds,
+  parallel=TRUE,
+  BPPARAM=MulticoreParam(28) )
+res_cleanest <- results( dds )
+
+
+nb_steps <- 0
+while( TRUE )
+{
+nb_steps <- nb_steps + 1
+
+# are these two sets correlated?
+cor <- cor.test( 
+  res_cleanest$stat, 
+  res_dirtiest$stat )$estimate
+cat( "-----------------------------------------\n", sep="" )
+cat( "at step ", nb_steps, ", cor is: ", cor, "\n", sep="" )
+cat( "dirtiest: ", head( set_dirtiest, 1 ),   "\n", sep="" )
+cat( "cleanest: ", head( set_cleanest, 1 ),   "\n", sep="" )
+cat( "-----------------------------------------\n", sep="" )
+
+# if not, then test the middle
+if( ( cor < 0.99 ) &
+  ( ( length( set_dirtiest ) - length( set_cleanest ) ) > 1 ) )
+{
+  # test
+  set_test <- floor( ( length( set_dirtiest ) - length( set_cleanest ) ) / 2 )
+  set_test <- head( set_cleanest, 1 ) - set_test
+  set_test <- set_test:nb_samples
+
+  #--- estimate DEG in test set
+  dds <- DESeqDataSetFromMatrix(
+    countData=C[ , bigO[ set_test ] ],
+    colData=coldata[ bigO[ set_test ], ],
+    design =~ rin + age + gender + smoker + condition )
+  dds <- DESeq(
+    dds,
+    parallel=TRUE,
+    BPPARAM=MulticoreParam(28) )
+  res_test <- results( dds )
+
+  cor_w_cleanest <- cor.test( 
+        res_test$stat, 
+    res_cleanest$stat )$estimate
+  cor_w_dirtiest <- cor.test( 
+        res_test$stat, 
+    res_dirtiest$stat )$estimate
+  cat( "  cor w cleanest: ", cor_w_cleanest, "\n", sep="" )
+  cat( "  cor w dirtiest: ", cor_w_dirtiest, "\n", sep="" )
+
+  # figure out if the test set is closer to
+  #  the cleanest set or the dirtiest set
+  if( cor_w_cleanest > cor_w_dirtiest )
+  {
+    # make the cleanest set that of the test set
+    set_cleanest <- set_test
+    res_cleanest <- res_test
+  } else {
+    # make the dirtiest set that of the test set
+    set_dirtiest <- set_test
+    res_dirtiest <- res_test
+  }
+} else { break }
+}
+
+
+# plot( res_cleanest$stat, res_dirtiest$stat )
+table( colData( dds )$condition )
+#   R NR 
+#  47 48 
+# table( colData( dds )$gender )
+# table( colData( dds )$smoker )
+
+# samples that were removed;
+setdiff( rownames( coldata ), rownames( colData( dds ) ) )
+# "0169" "0182" "0232"
+
+
+
+## Merge with averaged normalized count data per condition
+coldata <- colData( dds )
+L   <- levels( coldata$condition )
+nC  <- as.data.frame( counts( dds, normalized=TRUE ) )
+rmT <- rowMeans( nC[ , coldata$condition == L[2] ] )
+rmB <- rowMeans( nC[ , coldata$condition == L[1] ] )
+rrr <- cbind( cbind( 
+  as.data.frame( results( dds, independentFiltering=FALSE ) ), 
+  rmT ), rmB )
+colnames( rrr ) <- c( colnames( rrr )[ 1:6 ], L[2], L[1] )
+#=====----- results for all genes
+O   <- order( rrr$pvalue )
+rrr[ head( O ), ]
+write.table( 
+ rrr[ O, ],
+ "diff_ALLtpM_t0_-_NR_vs_R.txt",
+ sep="\t",
+ row.names=TRUE,
+ col.names=TRUE,
+ quote=FALSE )
+#=====----- results for genes with tpM > 0.1
+genes <- read.table( "genes_tpM_0p1.txt", header=FALSE )
+colnames( genes ) <- c( "gene" )
+rrr <- merge( genes, rrr, by.x=1, by.y=0 )
+# re-estimate FDR
+rrr[,"padj"] <- p.adjust( rrr[,"pvalue"], method="fdr" )
+O   <- order( rrr$pvalue )
+rrr[ head( O ), ]
+write.table( 
+ rrr[ O, ],
+ "diff_ITALY1_t0_-_NR_vs_R.txt",
+ sep="\t",
+ row.names=FALSE,
+ col.names=TRUE,
+ quote=FALSE )
+write.table( 
+  colData( dds ), 
+  "coldata_ITALY1_t0_-_NR_vs_R.txt",
+  sep="\t",
+  row.names=FALSE,
+  col.names=TRUE,
+  quote=FALSE )
+length( which( ( !is.na(rrr[,"padj"]) ) & ( rrr[,"padj"] <= 0.1 ) ) )
+# 0
+quit()
+
+
+
+######################################################################
+#=====================================================================
+#---------------------------------------------------------------------
+#
+#      3) t1 vs t0, for NR
+#
+#---------------------------------------------------------------------
+#=====================================================================
+######################################################################
+
+
+R --no-save --quiet
+load( "epid.R" )
+
+load_cnts <- function( strSample, strTime )
+{
+strFile <- paste0( 
+  "sample.", 
+  strSample,
+  ".",
+  strTime,
+  ".gfc" )
+print( strFile )
+cnts <- read.table(
+  strFile,
+  skip=2,
+  header=FALSE,
+  sep="\t",
+  as.is=TRUE,
+  stringsAsFactors=FALSE,
+  colClasses=c( "character", "NULL", "NULL", "NULL", "NULL", "NULL", "numeric" ) )
+
+# https://www.biostars.org/p/62988/
+rownames( cnts ) <- make.names( cnts[,1], unique=TRUE )
+# https://stackoverflow.com/questions/4605206/drop-data-frame-columns-by-name
+cnts <- subset( cnts, select=-c(1) )
+colnames( cnts ) <- c( paste0( strSample, ".", strTime ) )
+# colnames( cnts ) <- c( strSample )
+
+W <- which( rownames(cnts) == "HBB" )
+cnts <- cnts[ -c(W), 1, drop=FALSE ]
+W <- which( rownames(cnts) == "HBA1" )
+cnts <- cnts[ -c(W), 1, drop=FALSE ]
+W <- which( rownames(cnts) == "HBA2" )
+cnts <- cnts[ -c(W), 1, drop=FALSE ]
+return( cnts )
+}
+
+
+# trim to NR
+epid <- epid[ which( epid$resolved == 0 ), ]
+
+# t1 vs t0 @ NR:
+i <- 1
+C <- load_cnts( epid[i,1], "t0" )
+I <- length( epid[,1] )
+for( i in 2:I )
+{
+C2 <- load_cnts( epid[i,1], "t0" )
+C <- cbind( C, C2 )
+}
+for( i in 1:I )
+{
+C2 <- load_cnts( epid[i,1], "t1" )
+C <- cbind( C, C2 )
+}
+
+
+library(DESeq2)
+library("BiocParallel")
+register(MulticoreParam(28))
+
+coldata <- data.frame(
+  row.names   = colnames( C ),
+  "condition" = factor( substr( colnames( C ), 6, 7 ) ),
+  "gender"    = factor( rep( epid[,"Gender"  ], 2 ) ),
+  "smoker"    = factor( rep( epid[,"Smoker"  ], 2 ) ),
+  "rin"       = c( epid[,"RIN.t0" ], epid[,"RIN.t1" ] ),
+  "nbX"       = c( epid[,"nbX.t0" ], epid[,"nbX.t1" ] ),
+  "age"       = rep( epid[,"age" ], 2 ) )
+
+# make sure denominator is t0
+# https://bioconductor.org/packages/release/bioc/vignettes/DESeq2/inst/doc/DESeq2.html#note-on-factor-levels
+coldata[,1] <- relevel( coldata[,1], ref = "t0" )
+
+
+# order of samples
+#  from largest number of outlier genes to least
+bigO <- order( -coldata[,"nbX"] )
+nb_samples   <- length( bigO )
+set_dirtiest <- 1:nb_samples
+set_cleanest <- (1+max( which( coldata$nbX[bigO] > 5 ) )):nb_samples
+# confirm that these are cleanest
+coldata$nbX[bigO[ set_cleanest ]]
+coldata$nbX[bigO[ head( set_dirtiest ) ]]
+
+
+#--- estimate DEG in dirtiest set
+dds <- DESeqDataSetFromMatrix(
+  countData=C[ , bigO[ set_dirtiest ] ],
+  colData=coldata[ bigO[ set_dirtiest ], ],
+  design =~ rin + age + gender + smoker + condition )
+dds <- DESeq(
+  dds,
+  parallel=TRUE,
+  BPPARAM=MulticoreParam(28) )
+res_dirtiest <- results( dds )
+
+
+#--- estimate DEG in cleanest set
+dds <- DESeqDataSetFromMatrix(
+  countData=C[ , bigO[ set_cleanest ] ],
+  colData=coldata[ bigO[ set_cleanest ], ],
+  design =~ rin + age + gender + smoker + condition )
+dds <- DESeq(
+  dds,
+  parallel=TRUE,
+  BPPARAM=MulticoreParam(28) )
+res_cleanest <- results( dds )
+
+
+nb_steps <- 0
+while( TRUE )
+{
+nb_steps <- nb_steps + 1
+
+# are these two sets correlated?
+cor <- cor.test( 
+  res_cleanest$stat, 
+  res_dirtiest$stat )$estimate
+cat( "-----------------------------------------\n", sep="" )
+cat( "at step ", nb_steps, ", cor is: ", cor, "\n", sep="" )
+cat( "dirtiest: ", head( set_dirtiest, 1 ),   "\n", sep="" )
+cat( "cleanest: ", head( set_cleanest, 1 ),   "\n", sep="" )
+cat( "-----------------------------------------\n", sep="" )
+
+# if not, then test the middle
+if( ( cor < 0.99 ) &
+  ( ( length( set_dirtiest ) - length( set_cleanest ) ) > 1 ) )
+{
+  # test
+  set_test <- floor( ( length( set_dirtiest ) - length( set_cleanest ) ) / 2 )
+  set_test <- head( set_cleanest, 1 ) - set_test
+  set_test <- set_test:nb_samples
+
+  #--- estimate DEG in test set
+  dds <- DESeqDataSetFromMatrix(
+    countData=C[ , bigO[ set_test ] ],
+    colData=coldata[ bigO[ set_test ], ],
+    design =~ rin + age + gender + smoker + condition )
+  dds <- DESeq(
+    dds,
+    parallel=TRUE,
+    BPPARAM=MulticoreParam(28) )
+  res_test <- results( dds )
+
+  cor_w_cleanest <- cor.test( 
+        res_test$stat, 
+    res_cleanest$stat )$estimate
+  cor_w_dirtiest <- cor.test( 
+        res_test$stat, 
+    res_dirtiest$stat )$estimate
+  cat( "  cor w cleanest: ", cor_w_cleanest, "\n", sep="" )
+  cat( "  cor w dirtiest: ", cor_w_dirtiest, "\n", sep="" )
+
+  # figure out if the test set is closer to
+  #  the cleanest set or the dirtiest set
+  if( cor_w_cleanest > cor_w_dirtiest )
+  {
+    # make the cleanest set that of the test set
+    set_cleanest <- set_test
+    res_cleanest <- res_test
+  } else {
+    # make the dirtiest set that of the test set
+    set_dirtiest <- set_test
+    res_dirtiest <- res_test
+  }
+} else { break }
+}
+
+
+# plot( res_cleanest$stat, res_dirtiest$stat )
+table( colData( dds )$condition )
+#  t0 t1 
+#  48 46 
+# table( colData( dds )$gender )
+# table( colData( dds )$smoker )
+
+# samples that were removed;
+setdiff( rownames( coldata ), rownames( colData( dds ) ) )
+# "0182.t0" "0108.t1" "0154.t1" "0281.t1"
+
+
+
+## Merge with averaged normalized count data per condition
+coldata <- colData( dds )
+L   <- levels( coldata$condition )
+nC  <- as.data.frame( counts( dds, normalized=TRUE ) )
+rmT <- rowMeans( nC[ , coldata$condition == L[2] ] )
+rmB <- rowMeans( nC[ , coldata$condition == L[1] ] )
+rrr <- cbind( cbind( 
+  as.data.frame( results( dds, independentFiltering=FALSE ) ), 
+  rmT ), rmB )
+colnames( rrr ) <- c( colnames( rrr )[ 1:6 ], L[2], L[1] )
+#=====----- results for all genes
+O   <- order( rrr$pvalue )
+rrr[ head( O ), ]
+write.table( 
+ rrr[ O, ],
+ "diff_ALLtpM_NR_-_t1_vs_t0.txt",
+ sep="\t",
+ row.names=TRUE,
+ col.names=TRUE,
+ quote=FALSE )
+#=====----- results for genes with tpM > 0.1
+genes <- read.table( "genes_tpM_0p1.txt", header=FALSE )
+colnames( genes ) <- c( "gene" )
+rrr <- merge( genes, rrr, by.x=1, by.y=0 )
+# re-estimate FDR
+rrr[,"padj"] <- p.adjust( rrr[,"pvalue"], method="fdr" )
+O   <- order( rrr$pvalue )
+rrr[ head( O ), ]
+write.table( 
+ rrr[ O, ],
+ "diff_ITALY1_NR_-_t1_vs_t0.txt",
+ sep="\t",
+ row.names=FALSE,
+ col.names=TRUE,
+ quote=FALSE )
+write.table( 
+  colData( dds ), 
+  "coldata_ITALY1_NR_-_t1_vs_t0.txt",
+  sep="\t",
+  row.names=FALSE,
+  col.names=TRUE,
+  quote=FALSE )
+length( which( ( !is.na(rrr[,"padj"]) ) & ( rrr[,"padj"] <= 0.1 ) ) )
+# 0
+quit()
+
+
+
+######################################################################
+#=====================================================================
+#---------------------------------------------------------------------
+#
+#      4) t1 vs t0, for R
+#
+#---------------------------------------------------------------------
+#=====================================================================
+######################################################################
+
+
+R --no-save --quiet
+load( "epid.R" )
+
+load_cnts <- function( strSample, strTime )
+{
+strFile <- paste0( 
+  "sample.", 
+  strSample,
+  ".",
+  strTime,
+  ".gfc" )
+print( strFile )
+cnts <- read.table(
+  strFile,
+  skip=2,
+  header=FALSE,
+  sep="\t",
+  as.is=TRUE,
+  stringsAsFactors=FALSE,
+  colClasses=c( "character", "NULL", "NULL", "NULL", "NULL", "NULL", "numeric" ) )
+
+# https://www.biostars.org/p/62988/
+rownames( cnts ) <- make.names( cnts[,1], unique=TRUE )
+# https://stackoverflow.com/questions/4605206/drop-data-frame-columns-by-name
+cnts <- subset( cnts, select=-c(1) )
+colnames( cnts ) <- c( paste0( strSample, ".", strTime ) )
+# colnames( cnts ) <- c( strSample )
+
+W <- which( rownames(cnts) == "HBB" )
+cnts <- cnts[ -c(W), 1, drop=FALSE ]
+W <- which( rownames(cnts) == "HBA1" )
+cnts <- cnts[ -c(W), 1, drop=FALSE ]
+W <- which( rownames(cnts) == "HBA2" )
+cnts <- cnts[ -c(W), 1, drop=FALSE ]
+return( cnts )
+}
+
+
+# trim to R
+epid <- epid[ which( epid$resolved == 1 ), ]
+
+# t1 vs t0 @ R:
+i <- 1
+C <- load_cnts( epid[i,1], "t0" )
+I <- length( epid[,1] )
+for( i in 2:I )
+{
+C2 <- load_cnts( epid[i,1], "t0" )
+C <- cbind( C, C2 )
+}
+for( i in 1:I )
+{
+C2 <- load_cnts( epid[i,1], "t1" )
+C <- cbind( C, C2 )
+}
+
+
+
+library(DESeq2)
+library("BiocParallel")
+register(MulticoreParam(28))
+
+coldata <- data.frame(
+  row.names   = colnames( C ),
+  "condition" = factor( substr( colnames( C ), 6, 7 ) ),
+  "gender"    = factor( rep( epid[,"Gender"  ], 2 ) ),
+  "smoker"    = factor( rep( epid[,"Smoker"  ], 2 ) ),
+  "rin"       = c( epid[,"RIN.t0" ], epid[,"RIN.t1" ] ),
+  "nbX"       = c( epid[,"nbX.t0" ], epid[,"nbX.t1" ] ),
+  "age"       = rep( epid[,"age" ], 2 ) )
+
+# make sure denominator is t0
+# https://bioconductor.org/packages/release/bioc/vignettes/DESeq2/inst/doc/DESeq2.html#note-on-factor-levels
+coldata[,1] <- relevel( coldata[,1], ref = "t0" )
+
+
+# order of samples
+#  from largest number of outlier genes to least
+bigO <- order( -coldata[,"nbX"] )
+nb_samples   <- length( bigO )
+set_dirtiest <- 1:nb_samples
+set_cleanest <- (1+max( which( coldata$nbX[bigO] > 5 ) )):nb_samples
+# confirm that these are cleanest
+coldata$nbX[bigO[ set_cleanest ]]
+coldata$nbX[bigO[ head( set_dirtiest ) ]]
+
+
+#--- estimate DEG in dirtiest set
+dds <- DESeqDataSetFromMatrix(
+  countData=C[ , bigO[ set_dirtiest ] ],
+  colData=coldata[ bigO[ set_dirtiest ], ],
+  design =~ rin + age + gender + smoker + condition )
+dds <- DESeq(
+  dds,
+  parallel=TRUE,
+  BPPARAM=MulticoreParam(28) )
+res_dirtiest <- results( dds )
+
+
+#--- estimate DEG in cleanest set
+dds <- DESeqDataSetFromMatrix(
+  countData=C[ , bigO[ set_cleanest ] ],
+  colData=coldata[ bigO[ set_cleanest ], ],
+  design =~ rin + age + gender + smoker + condition )
+dds <- DESeq(
+  dds,
+  parallel=TRUE,
+  BPPARAM=MulticoreParam(28) )
+res_cleanest <- results( dds )
+
+
+nb_steps <- 0
+while( TRUE )
+{
+nb_steps <- nb_steps + 1
+
+# are these two sets correlated?
+cor <- cor.test( 
+  res_cleanest$stat, 
+  res_dirtiest$stat )$estimate
+cat( "-----------------------------------------\n", sep="" )
+cat( "at step ", nb_steps, ", cor is: ", cor, "\n", sep="" )
+cat( "dirtiest: ", head( set_dirtiest, 1 ),   "\n", sep="" )
+cat( "cleanest: ", head( set_cleanest, 1 ),   "\n", sep="" )
+cat( "-----------------------------------------\n", sep="" )
+
+# if not, then test the middle
+if( ( cor < 0.99 ) &
+  ( ( length( set_dirtiest ) - length( set_cleanest ) ) > 1 ) )
+{
+  # test
+  set_test <- floor( ( length( set_dirtiest ) - length( set_cleanest ) ) / 2 )
+  set_test <- head( set_cleanest, 1 ) - set_test
+  set_test <- set_test:nb_samples
+
+  #--- estimate DEG in test set
+  dds <- DESeqDataSetFromMatrix(
+    countData=C[ , bigO[ set_test ] ],
+    colData=coldata[ bigO[ set_test ], ],
+    design =~ rin + age + gender + smoker + condition )
+  dds <- DESeq(
+    dds,
+    parallel=TRUE,
+    BPPARAM=MulticoreParam(28) )
+  res_test <- results( dds )
+
+  cor_w_cleanest <- cor.test( 
+        res_test$stat, 
+    res_cleanest$stat )$estimate
+  cor_w_dirtiest <- cor.test( 
+        res_test$stat, 
+    res_dirtiest$stat )$estimate
+  cat( "  cor w cleanest: ", cor_w_cleanest, "\n", sep="" )
+  cat( "  cor w dirtiest: ", cor_w_dirtiest, "\n", sep="" )
+
+  # figure out if the test set is closer to
+  #  the cleanest set or the dirtiest set
+  if( cor_w_cleanest > cor_w_dirtiest )
+  {
+    # make the cleanest set that of the test set
+    set_cleanest <- set_test
+    res_cleanest <- res_test
+  } else {
+    # make the dirtiest set that of the test set
+    set_dirtiest <- set_test
+    res_dirtiest <- res_test
+  }
+} else { break }
+}
+
+
+# plot( res_cleanest$stat, res_dirtiest$stat )
+table( colData( dds )$condition )
+#  t0 t1 
+#  49 48 
+# table( colData( dds )$gender )
+# table( colData( dds )$smoker )
+
+# samples that were removed;
+setdiff( rownames( coldata ), rownames( colData( dds ) ) )
+# "0098.t1"
+
+
+## Merge with averaged normalized count data per condition
+coldata <- colData( dds )
+L   <- levels( coldata$condition )
+nC  <- as.data.frame( counts( dds, normalized=TRUE ) )
+rmT <- rowMeans( nC[ , coldata$condition == L[2] ] )
+rmB <- rowMeans( nC[ , coldata$condition == L[1] ] )
+rrr <- cbind( cbind( 
+  as.data.frame( results( dds, independentFiltering=FALSE ) ), 
+  rmT ), rmB )
+colnames( rrr ) <- c( colnames( rrr )[ 1:6 ], L[2], L[1] )
+#=====----- results for all genes
+O   <- order( rrr$pvalue )
+rrr[ head( O ), ]
+write.table( 
+ rrr[ O, ],
+ "diff_ALLtpM_R_-_t1_vs_t0.txt",
+ sep="\t",
+ row.names=TRUE,
+ col.names=TRUE,
+ quote=FALSE )
+#=====----- results for genes with tpM > 0.1
+genes <- read.table( "genes_tpM_0p1.txt", header=FALSE )
+colnames( genes ) <- c( "gene" )
+rrr <- merge( genes, rrr, by.x=1, by.y=0 )
+# re-estimate FDR
+rrr[,"padj"] <- p.adjust( rrr[,"pvalue"], method="fdr" )
+O   <- order( rrr$pvalue )
+rrr[ head( O ), ]
+write.table( 
+ rrr[ O, ],
+ "diff_ITALY1_R_-_t1_vs_t0.txt",
+ sep="\t",
+ row.names=FALSE,
+ col.names=TRUE,
+ quote=FALSE )
+write.table( 
+  colData( dds ), 
+  "coldata_ITALY1_R_-_t1_vs_t0.txt",
+  sep="\t",
+  row.names=FALSE,
+  col.names=TRUE,
+  quote=FALSE )
+length( which( ( !is.na(rrr[,"padj"]) ) & ( rrr[,"padj"] <= 0.1 ) ) )
+# 5612
+
+
+
+
+----------------------------------------------------------------------
+======================================================================
+######################################################################
+# blood cell type fraction estimates via cibersort
+######################################################################
+======================================================================
+----------------------------------------------------------------------
+
+
+R --no-save --quiet
+#
+# ask for CIBERSORT's code
+#  * CIBERSORT.R
+#  * LM22.txt
+#
+source("CIBERSORT.R")
+# this takes a long time to run...;
+results <- CIBERSORT(
+  "LM22.txt",
+   "expr_ALL.tpM.txt",
+  perm=1e5, QN=TRUE, absolute=FALSE )
+write.table( results, 
+ "cibersort_ALL.tpM.txt",
+ sep="\t", row.names=TRUE, col.names=TRUE, quote=FALSE )
+
+
+
+
+results <- read.table( 
+ "cibersort_ALL.tpM.txt",
+ sep="\t", header=TRUE, as.is=TRUE, 
+ stringsAsFactors=FALSE, quote="" )
+
+
+U <- unlist( results[ , 1:22 ] )
+minE <- min( U[ U > 0 ] )
+load( "epid.R" )
+
+
+#==========---------- t0, NR vs R ----------==========#
+#=====================================================#
+W <- grep( ".t0", rownames( results ) )
+coldata <- data.frame(
+  row.names   = rownames( results )[ W ],
+  "condition" = factor( ifelse( epid[,"resolved"], "R", "NR" ) ),
+  "gender"    = factor( epid[,"Gender"  ] ),
+  "smoker"    = factor( epid[,"Smoker"  ] ),
+  "rin"       =         epid[,"RIN.t0"  ]  ,
+  "nbX"       =         epid[,"nbX.t0"  ]  ,
+  "age"       =         epid[,"age"     ] )
+
+# make sure denominator is resolved
+# https://bioconductor.org/packages/release/bioc/vignettes/DESeq2/inst/doc/DESeq2.html#note-on-factor-levels
+coldata[,1] <- relevel( coldata[,1], ref = "R" )
+
+write.table( 
+merge( coldata, results[ rownames( coldata ),  ], by.x=0, by.y=0 ),
+  "cibersort_t0_-_NR_vs_R.coldata.txt",
+  sep="\t",
+  row.names=FALSE,
+  col.names=TRUE,
+  quote=FALSE )
+
+
+DF <- data.frame( stringsAsFactors=FALSE )
+for( icell in 1:22 )
+{
+coldata[,"cell_fraction"] <- results[ rownames( coldata ), icell ]
+if( length( unique( coldata$cell_fraction ) ) > 1 )
+{
+S <- glm( 
+  condition ~ age + gender + smoker + cell_fraction, 
+  data=coldata,
+  family=binomial )
+C  <- coef( summary( S ) )
+L  <- levels( coldata$condition )
+w1 <- which( coldata$condition == L[1] )
+w2 <- which( coldata$condition == L[2] )
+P  <- predict( S, data=coldata )
+mw1<- max( mean( coldata[ w1, "cell_fraction" ] ), minE )
+mw2<- max( mean( coldata[ w2, "cell_fraction" ] ), minE )
+
+df <- data.frame( 
+  cell_type=colnames( results )[ icell ],
+  beta  =C[ "cell_fraction",1],
+  pval  =C[ "cell_fraction",4],
+  nb_R  =length( w1 ),
+  nb_NR =length( w2 ),
+  avg_R =mw1,
+  avg_NR=mw2,
+  log2_FC=log2( mw2 / mw1 ),
+  stringsAsFactors=FALSE )
+DF <- rbind( DF, df )
+}
+}
+
+O <- order( DF$pval )
+DF[,"fdr"]  <- p.adjust( DF[,"pval"], method="fdr" )
+DF[,"bonf"] <- p.adjust( DF[,"pval"], method="bonferroni" )
+DF[ O, ]
+
+write.table( DF[ O, ],
+ "cibersort_t0_-_NR_vs_R.tpM.txt",
+  sep="\t",
+  row.names=FALSE,
+  col.names=TRUE,
+  quote=FALSE )
+
+
+#==========---------- t1, NR vs R ----------==========#
+#=====================================================#
+W <- grep( ".t1", rownames( results ) )
+coldata <- data.frame(
+  row.names   = rownames( results )[ W ],
+  "condition" = factor( ifelse( epid[,"resolved"], "R", "NR" ) ),
+  "gender"    = factor( epid[,"Gender"  ] ),
+  "smoker"    = factor( epid[,"Smoker"  ] ),
+  "rin"       =         epid[,"RIN.t1"  ]  ,
+  "nbX"       =         epid[,"nbX.t1"  ]  ,
+  "age"       =         epid[,"age"     ] )
+
+# make sure denominator is resolved
+# https://bioconductor.org/packages/release/bioc/vignettes/DESeq2/inst/doc/DESeq2.html#note-on-factor-levels
+coldata[,1] <- relevel( coldata[,1], ref = "R" )
+
+write.table( 
+merge( coldata, results[ rownames( coldata ),  ], by.x=0, by.y=0 ),
+  "cibersort_t1_-_NR_vs_R.coldata.txt",
+  sep="\t",
+  row.names=FALSE,
+  col.names=TRUE,
+  quote=FALSE )
+
+
+DF <- data.frame( stringsAsFactors=FALSE )
+for( icell in 1:22 )
+{
+coldata[,"cell_fraction"] <- results[ rownames( coldata ), icell ]
+if( length( unique( coldata$cell_fraction ) ) > 1 )
+{
+S <- glm( 
+  condition ~ age + gender + smoker + cell_fraction, 
+  data=coldata,
+  family=binomial )
+C  <- coef( summary( S ) )
+L  <- levels( coldata$condition )
+w1 <- which( coldata$condition == L[1] )
+w2 <- which( coldata$condition == L[2] )
+P  <- predict( S, data=coldata )
+mw1<- max( mean( coldata[ w1, "cell_fraction" ] ), minE )
+mw2<- max( mean( coldata[ w2, "cell_fraction" ] ), minE )
+
+df <- data.frame( 
+  cell_type=colnames( results )[ icell ],
+  beta  =C[ "cell_fraction",1],
+  pval  =C[ "cell_fraction",4],
+  nb_R  =length( w1 ),
+  nb_NR =length( w2 ),
+  avg_R =mw1,
+  avg_NR=mw2,
+  log2_FC=log2( mw2 / mw1 ),
+  stringsAsFactors=FALSE )
+DF <- rbind( DF, df )
+}
+}
+
+O <- order( DF$pval )
+DF[,"fdr"]  <- p.adjust( DF[,"pval"], method="fdr" )
+DF[,"bonf"] <- p.adjust( DF[,"pval"], method="bonferroni" )
+DF[ O, ]
+
+write.table( DF[ O, ],
+ "cibersort_t1_-_NR_vs_R.tpM.txt",
+  sep="\t",
+  row.names=FALSE,
+  col.names=TRUE,
+  quote=FALSE )
+
+
+#==========---------- NR, t1 vs t0 ----------==========#
+#======================================================#
+w <- which( epid[,"resolved"] == 0 )
+W <- match( 
+c( paste0( epid[ w, 1 ], ".t0" ),
+   paste0( epid[ w, 1 ], ".t1" ) ),
+  rownames( results ) )
+
+coldata <- data.frame(
+  row.names   = rownames( results )[ W ],
+  "condition" = factor( c( rep( "t0", length(w) ), rep( "t1", length(w) ) ) ),
+  "gender"    = factor( rep( epid[w,"Gender"], 2 ) ),
+  "smoker"    = factor( rep( epid[w,"Smoker"], 2 ) ),
+  "rin"       =         c(epid[w,"RIN.t0"],epid[w,"RIN.t1"]),
+  "nbX"       =         c(epid[w,"nbX.t0"],epid[w,"nbX.t1"]),
+  "age"       =         rep( epid[w,"age"], 2 ) )
+
+# make sure denominator is t0
+# https://bioconductor.org/packages/release/bioc/vignettes/DESeq2/inst/doc/DESeq2.html#note-on-factor-levels
+coldata[,1] <- relevel( coldata[,1], ref = "t0" )
+
+write.table( 
+merge( coldata, results[ rownames( coldata ),  ], by.x=0, by.y=0 ),
+  "cibersort_NR_-_t1_vs_t0.coldata.txt",
+  sep="\t",
+  row.names=FALSE,
+  col.names=TRUE,
+  quote=FALSE )
+
+
+DF <- data.frame( stringsAsFactors=FALSE )
+for( icell in 1:22 )
+{
+coldata[,"cell_fraction"] <- results[ rownames( coldata ), icell ]
+if( length( unique( coldata$cell_fraction ) ) > 1 )
+{
+S <- glm( 
+  condition ~ age + gender + smoker + cell_fraction, 
+  data=coldata,
+  family=binomial )
+C  <- coef( summary( S ) )
+L  <- levels( coldata$condition )
+w1 <- which( coldata$condition == L[1] )
+w2 <- which( coldata$condition == L[2] )
+P  <- predict( S, data=coldata )
+mw1<- max( mean( coldata[ w1, "cell_fraction" ] ), minE )
+mw2<- max( mean( coldata[ w2, "cell_fraction" ] ), minE )
+
+df <- data.frame( 
+  cell_type=colnames( results )[ icell ],
+  beta  =C[ "cell_fraction",1],
+  pval  =C[ "cell_fraction",4],
+  nb_t0 =length( w1 ),
+  nb_t1 =length( w2 ),
+  avg_t0=mw1,
+  avg_t1=mw2,
+  log2_FC=log2( mw2 / mw1 ),
+  stringsAsFactors=FALSE )
+DF <- rbind( DF, df )
+}
+}
+
+O <- order( DF$pval )
+DF[,"fdr"]  <- p.adjust( DF[,"pval"], method="fdr" )
+DF[,"bonf"] <- p.adjust( DF[,"pval"], method="bonferroni" )
+DF[ O, ]
+
+write.table( DF[ O, ],
+ "cibersort_NR_-_t1_vs_t0.tpM.txt",
+  sep="\t",
+  row.names=FALSE,
+  col.names=TRUE,
+  quote=FALSE )
+
+
+#==========---------- R, t1 vs t0 ----------==========#
+#=====================================================#
+w <- which( epid[,"resolved"] == 1 )
+W <- match( 
+c( paste0( epid[ w, 1 ], ".t0" ),
+   paste0( epid[ w, 1 ], ".t1" ) ),
+  rownames( results ) )
+
+coldata <- data.frame(
+  row.names   = rownames( results )[ W ],
+  "condition" = factor( c( rep( "t0", length(w) ), rep( "t1", length(w) ) ) ),
+  "gender"    = factor( rep( epid[w,"Gender"], 2 ) ),
+  "smoker"    = factor( rep( epid[w,"Smoker"], 2 ) ),
+  "rin"       =         c(epid[w,"RIN.t0"],epid[w,"RIN.t1"]),
+  "nbX"       =         c(epid[w,"nbX.t0"],epid[w,"nbX.t1"]),
+  "age"       =         rep( epid[w,"age"], 2 ) )
+
+# make sure denominator is t0
+# https://bioconductor.org/packages/release/bioc/vignettes/DESeq2/inst/doc/DESeq2.html#note-on-factor-levels
+coldata[,1] <- relevel( coldata[,1], ref = "t0" )
+
+write.table( 
+merge( coldata, results[ rownames( coldata ),  ], by.x=0, by.y=0 ),
+  "cibersort_R_-_t1_vs_t0.coldata.txt",
+  sep="\t",
+  row.names=FALSE,
+  col.names=TRUE,
+  quote=FALSE )
+
+DF <- data.frame( stringsAsFactors=FALSE )
+for( icell in 1:22 )
+{
+coldata[,"cell_fraction"] <- results[ rownames( coldata ), icell ]
+if( length( unique( coldata$cell_fraction ) ) > 1 )
+{
+S <- glm( 
+  condition ~ age + gender + smoker + cell_fraction, 
+  data=coldata,
+  family=binomial )
+C  <- coef( summary( S ) )
+L  <- levels( coldata$condition )
+w1 <- which( coldata$condition == L[1] )
+w2 <- which( coldata$condition == L[2] )
+P  <- predict( S, data=coldata )
+mw1<- max( mean( coldata[ w1, "cell_fraction" ] ), minE )
+mw2<- max( mean( coldata[ w2, "cell_fraction" ] ), minE )
+
+df <- data.frame( 
+  cell_type=colnames( results )[ icell ],
+  beta  =C[ "cell_fraction",1],
+  pval  =C[ "cell_fraction",4],
+  nb_t0 =length( w1 ),
+  nb_t1 =length( w2 ),
+  avg_t0=mw1,
+  avg_t1=mw2,
+  log2_FC=log2( mw2 / mw1 ),
+  stringsAsFactors=FALSE )
+DF <- rbind( DF, df )
+}
+}
+
+O <- order( DF$pval )
+DF[,"fdr"]  <- p.adjust( DF[,"pval"], method="fdr" )
+DF[,"bonf"] <- p.adjust( DF[,"pval"], method="bonferroni" )
+DF[ O, ]
+
+write.table( DF[ O, ],
+ "cibersort_R_-_t1_vs_t0.tpM.txt",
+  sep="\t",
+  row.names=FALSE,
+  col.names=TRUE,
+  quote=FALSE )
+
+
+# to plot a specific contrast
+icell <- match( "NK cells resting", colnames( results ) )
+coldata[,"cell_fraction"] <- results[ rownames( coldata ), icell ]
+L  <- levels( coldata$condition )
+w1 <- which( coldata$condition == L[1] )
+w2 <- which( coldata$condition == L[2] )
+boxplot( 
+  coldata$cell_fraction[ w1 ], 
+  coldata$cell_fraction[ w2 ] )
+points( 1, mean( coldata$cell_fraction[ w1 ] ), cex=4, pch=16 )
+points( 2, mean( coldata$cell_fraction[ w2 ] ), cex=4, pch=16 )
+
+
+quit()
+
+
+
+
+
+
+----------------------------------------------------------------------
+======================================================================
+######################################################################
+# differentially expressed pathways via fgsea
+######################################################################
+======================================================================
+----------------------------------------------------------------------
+
+
+R --no-save --quiet
+library(fgsea)
+library(parallel)
+print(sessionInfo())
+# R version 3.6.0 (2019-04-26)
+# Platform: x86_64-pc-linux-gnu (64-bit)
+# Running under: Ubuntu 20.04.4 LTS
+# 
+# Matrix products: default
+# BLAS:   /usr/lib/x86_64-linux-gnu/blas/libblas.so.3.9.0
+# LAPACK: /usr/lib/x86_64-linux-gnu/lapack/liblapack.so.3.9.0
+# 
+# locale:
+#  [1] LC_CTYPE=en_CA.UTF-8       LC_NUMERIC=C              
+#  [3] LC_TIME=en_CA.UTF-8        LC_COLLATE=en_CA.UTF-8    
+#  [5] LC_MONETARY=en_CA.UTF-8    LC_MESSAGES=en_CA.UTF-8   
+#  [7] LC_PAPER=en_CA.UTF-8       LC_NAME=C                 
+#  [9] LC_ADDRESS=C               LC_TELEPHONE=C            
+# [11] LC_MEASUREMENT=en_CA.UTF-8 LC_IDENTIFICATION=C       
+# 
+# attached base packages:
+# [1] parallel  stats     graphics  grDevices utils     datasets  methods  
+# [8] base     
+# 
+# other attached packages:
+# [1] fgsea_1.12.0 Rcpp_1.0.8  
+# 
+# loaded via a namespace (and not attached):
+#  [1] magrittr_2.0.2      tidyselect_1.1.1    munsell_0.5.0      
+#  [4] BiocParallel_1.20.1 lattice_0.20-38     colorspace_2.0-3   
+#  [7] R6_2.5.1            rlang_1.0.1         fastmatch_1.1-0    
+# [10] fansi_1.0.2         dplyr_1.0.8         grid_3.6.0         
+# [13] data.table_1.14.2   gtable_0.3.0        utf8_1.2.2         
+# [16] DBI_1.1.1           cli_3.2.0           ellipsis_0.3.2     
+# [19] assertthat_0.2.1    tibble_3.1.6        lifecycle_1.0.1    
+# [22] crayon_1.5.0        Matrix_1.2-17       gridExtra_2.3      
+# [25] purrr_0.3.4         ggplot2_3.3.5       vctrs_0.3.8        
+# [28] glue_1.6.2          compiler_3.6.0      pillar_1.7.0       
+# [31] generics_0.1.2      scales_1.1.1        pkgconfig_2.0.3    
+quit()
+
+
+
+
+for diff in ITALY1_R_-_t1_vs_t0 ITALY1_NR_-_t1_vs_t0 ITALY1_t0_-_NR_vs_R ITALY1_t1_-_NR_vs_R; do
+R --no-save --quiet << EOF
+library(fgsea)
+library(parallel)
+# library(ggplot2)
+
+  rrr <- read.table( "diff_${diff}.txt",
+   sep="\t", header=TRUE, as.is=TRUE, stringsAsFactors=FALSE )
+  O   <- order( -rrr[,"stat"] )
+  rrr <- rrr[ O, ]
+# R   <- which( ( rrr[["baseMean"]] >= 10 ) & ( ! is.na( rrr[["padj"]] ) ) )
+  R   <- which( ! is.na( rrr[["padj"]] ) )
+  rankedv        <- as.vector( rrr[["stat"]][R] )
+  names(rankedv) <- rownames( rrr[R,] )
+  if( length( grep( "gene", colnames( rrr ) ) ) == 1 )
+     names(rankedv) <- rrr[R,"gene"]
+
+
+  desc <- read.table( "Human_GOBP_desc.txt",
+ quote="",
+ sep="\t", header=FALSE, 
+ as.is=TRUE, stringsAsFactors=FALSE,
+ colClasses=c("character","character"))
+colnames( desc ) <- c("pathway","desc")
+
+
+goBP <- gmtPathways("Human_GOBP_fgsea.gmt")
+set.seed( 666 )
+gsea_goBP <- fgsea(
+  pathways = goBP, 
+  stats    = rankedv,
+  minSize  = 1,
+  maxSize  = 1000,
+  nperm    = 1e7,
+  nproc    = ceiling( detectCores() / 2 ) )
+
+gsea_goBP <- merge( desc, gsea_goBP, by.x="pathway", by.y="pathway" )
+O <- order( gsea_goBP[[ "pval" ]] )
+
+gsea_goBP[[ "leadingEdge" ]] <- 
+ sapply( gsea_goBP[[ "leadingEdge" ]],
+        FUN = paste, collapse = "," )
+
+write.table( gsea_goBP[ head( O ), ], sep="\t", 
+  row.names=FALSE, col.names=TRUE, quote=FALSE )
+
+write.table( gsea_goBP[ O, ],
+  "fgsea2_${diff}.GOBP.txt",
+  sep="\t",
+  row.names=FALSE,
+  col.names=TRUE,
+  quote=FALSE )
+EOF
+done
